@@ -24,6 +24,8 @@ SHARED_ID = "seola.patcher.abcde.shared"
 PATCHER_SIG_NAME = "dev.seola.apppatcher.sig.orig"
 KEY_PASSWORD = "aaaaaa"
 
+# java -jar apksigner.jar sign --ks KEY.jks --v2-signing-enabled true --ks-pass pass:aaaaaa target.apk
+
 
 def main():
     check_file()
@@ -96,9 +98,17 @@ def patch(base_path: str, out_path: str, signature: str):
                     axml, _ = pyaxml.AXML.from_axml(zf.read(info))
                     manifest: lxml.etree.ElementBase = axml.to_xml()
 
+                    SHARED_ATTR_KEY = (
+                        "{http://schemas.android.com/apk/res/android}sharedUserId"
+                    )
+                    
+                    orig = {**manifest.attrib}
+                    if SHARED_ATTR_KEY in orig:
+                        del orig[SHARED_ATTR_KEY]
+
                     changed = {
-                        "{http://schemas.android.com/apk/res/android}sharedUserId": SHARED_ID,
-                        **manifest.attrib,
+                        SHARED_ATTR_KEY: SHARED_ID,
+                        **orig,
                     }
 
                     manifest.attrib.clear()
