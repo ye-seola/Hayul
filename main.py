@@ -1,3 +1,4 @@
+import json
 import re
 import os
 import glob
@@ -19,6 +20,8 @@ from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding
 
 client = AdbClient()
+
+HAYUL_DEBUG = False
 
 SHARED_ID = "seola.patcher.abcde.shared"
 PATCHER_SIG_NAME = "dev.seola.apppatcher.sig.orig"
@@ -47,6 +50,11 @@ def main():
         out_path = os.path.join(dir, "patched.apk")
 
         patch(base_path, out_path, get_signature(base_path))
+
+        if HAYUL_DEBUG:
+            print("DEBUG", dir)
+            input("press enter to continue")
+
         os.remove(base_path)
 
         align(dir)
@@ -59,6 +67,79 @@ def main():
             os.rename(os.path.join(dir, name), os.path.join(outdir, name))
 
     print(outdir, "에 성공적으로 패치되었습니다")
+
+
+ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+
+
+def _update_android_attribute(type: str, attrib: dict[str, str], name: str, value: str):
+    aname = ANDROID_NS + name
+    attrib.pop(aname, None)
+
+    attrIdx = ATTRIB_IDX_DATA[type][name]
+    for idx, attribName in enumerate(attrib.keys()):
+        if attribName.startswith(ANDROID_NS):
+            onlyName = attribName[len(ANDROID_NS) :]
+
+            if ATTRIB_IDX_DATA[type][onlyName] > attrIdx:
+                keys = list(attrib.keys())
+                left = dict(map(lambda key: (key, attrib[key]), keys[:idx]))
+                right = dict(map(lambda key: (key, attrib[key]), keys[idx:]))
+
+                return {
+                    **left,
+                    aname: value,
+                    **right,
+                }
+
+
+def patch_manifest_axml(
+    axml: bytes,
+    sharedUserId: str | None = None,
+    appComponentFactory: str | None = None,
+    debuggable: str | None = None,
+    applicationProcess: str | None = None,
+):
+    axml, _ = pyaxml.AXML.from_axml(axml)
+
+    manifest: lxml.etree.ElementBase = axml.to_xml()
+    application: lxml.etree.ElementBase = manifest.find("./application")
+
+    manifestAttrib: dict[str, str] = {**manifest.attrib}
+    applicationAttrib: dict[str, str] = {**application.attrib}
+
+    if sharedUserId is not None:
+        manifestAttrib = _update_android_attribute(
+            "manifest", manifestAttrib, "sharedUserId", sharedUserId
+        )
+
+    if appComponentFactory is not None:
+        applicationAttrib = _update_android_attribute(
+            "application", applicationAttrib, "appComponentFactory", appComponentFactory
+        )
+
+    if debuggable is not None:
+        applicationAttrib = _update_android_attribute(
+            "application", applicationAttrib, "debuggable", debuggable
+        )
+
+    if applicationProcess is not None:
+        applicationAttrib = _update_android_attribute(
+            "application", applicationAttrib, "process", applicationProcess
+        )
+
+    manifest.attrib.clear()
+    for k, v in manifestAttrib.items():
+        manifest.attrib[k] = v
+
+    application.attrib.clear()
+    for k, v in applicationAttrib.items():
+        application.attrib[k] = v
+
+    axmlOut = pyaxml.axml.AXML()
+    axmlOut.from_xml(manifest)
+
+    return axmlOut.pack()
 
 
 def extract(dev: Device, dir: str, apks: list[str]):
@@ -95,38 +176,15 @@ def patch(base_path: str, out_path: str, signature: str):
                     continue
 
                 if info.filename == "AndroidManifest.xml":
-                    axml, _ = pyaxml.AXML.from_axml(zf.read(info))
-                    manifest: lxml.etree.ElementBase = axml.to_xml()
-
-                    SHARED_ATTR_KEY = (
-                        "{http://schemas.android.com/apk/res/android}sharedUserId"
+                    pactehed = patch_manifest_axml(
+                        zf.read(info),
+                        sharedUserId=SHARED_ID,
+                        appComponentFactory="dev.seola.apppatcher.stub.PatcherAppComponentFactory",
                     )
-                    
-                    orig = {**manifest.attrib}
-                    if SHARED_ATTR_KEY in orig:
-                        del orig[SHARED_ATTR_KEY]
-
-                    changed = {
-                        SHARED_ATTR_KEY: SHARED_ID,
-                        **orig,
-                    }
-
-                    manifest.attrib.clear()
-
-                    for k, v in changed.items():
-                        manifest.attrib[k] = v
-
-                    application: lxml.etree.ElementBase = manifest.find("./application")
-                    application.attrib[
-                        "{http://schemas.android.com/apk/res/android}appComponentFactory"
-                    ] = "dev.seola.apppatcher.stub.PatcherAppComponentFactory"
-
-                    axml = pyaxml.axml.AXML()
-                    axml.from_xml(manifest)
 
                     zf2.writestr(
                         zinfo_or_arcname=info,
-                        data=axml.pack(),
+                        data=pactehed,
                         compress_type=info.compress_type,
                     )
 
@@ -258,6 +316,9 @@ def get_key_path():
 def get_asset_path(name: str):
     return str(Path(__file__).parent / "assets" / name)
 
+
+with open(get_asset_path("attrib.json"), "r") as f:
+    ATTRIB_IDX_DATA = json.loads(f.read())
 
 if __name__ == "__main__":
     main()
