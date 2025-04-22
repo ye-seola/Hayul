@@ -92,6 +92,14 @@ def _update_android_attribute(type: str, attrib: dict[str, str], name: str, valu
                     **right,
                 }
 
+    keys = list(attrib.keys())
+    left = dict(map(lambda key: (key, attrib[key]), keys[:]))
+
+    return {
+        **left,
+        aname: value,
+    }
+
 
 def patch_manifest_axml(
     axml: bytes,
