@@ -199,7 +199,7 @@ def patch(base_path: str, out_path: str, signature: str):
                     print("manifest patched")
                     continue
 
-                m = re.match("classes(\d+)\.dex", info.filename)
+                m = re.match(r"classes(\d+)\.dex", info.filename)
                 if m:
                     max_dex = max(max_dex, int(m.group(1)))
                     dex_list.append(info.filename)
